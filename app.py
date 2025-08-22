@@ -24,7 +24,7 @@ archivo = st.file_uploader("📂 Carga el archivo Excel del extracto", type=["xl
 if archivo is not None: #Asegurarse de que se ha cargado un archivo
     try:
         df = pd.read_excel(archivo, engine="openpyxl")  # Usa siempre openpyxl
-        df = df.iloc[2:].reset_index(drop=True)  # elimina filas 0 y 1 y reinicia el índice
+        df = df.iloc[1:].reset_index(drop=True)  # elimina filas 0 y 1 y reinicia el índice
         st.success("Archivo cargado correctamente ✅")
         
         df_transformado = transformar_extracto_bbva(df)
