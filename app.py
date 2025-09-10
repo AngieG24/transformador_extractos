@@ -11,8 +11,8 @@ def transformar_extracto_bbva(df):
     df['Concepto'] = df.iloc[:, 1].astype(str) + " " + df.iloc[:, 2].astype(str) + " " + df.iloc[:, 3].astype(str)
     
     # Asegurarse de que las columnas de valores son numéricas
+    df['Valor'] = pd.to_numeric(df.iloc[:, 5],errors="coerce").fillna(0) - pd.to_numeric(df.iloc[:, 4],errors="coerce").fillna(0)
     
-    df['Valor'] = pd.to_numeric(df.iloc[:, 4],errors="coerce").fillna(0) - pd.to_numeric(df.iloc[:, 5],errors="coerce").fillna(0)
     df_final = df[['Fecha', 'Concepto', 'Valor']]
     return df_final
 
@@ -25,7 +25,7 @@ archivo = st.file_uploader("📂 Carga el archivo Excel del extracto", type=["xl
 
 if archivo is not None: #Asegurarse de que se ha cargado un archivo
     try:
-        df = pd.read_excel(archivo, engine="openpyxl")  # Usa siempre openpyxl
+        df = pd.read_excel(archivo, engine="openpyxl")  # Usa siempre openpyxl para leer
         df = df.iloc[1:].reset_index(drop=True)  # elimina filas 0 y reinicia el índice
         st.success("Archivo cargado correctamente ✅")
         
