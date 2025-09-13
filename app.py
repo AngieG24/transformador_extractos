@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from openpyxl import load_workbook
+import re
 
 def transformar_extracto_bbva(df):
     df = df.copy()
@@ -126,21 +128,58 @@ def transformar_extracto_bdb(df):
 
     df['id'] = df.iloc[:, 0]
     df['cuenta'] = df.iloc[:, 1].astype(str)
-    df['fecha_ope'] = pd.to_datetime(df.iloc[:, 3].astype(str).str.replace(".", "/").str.strip(),format="%d/%m/%Y", errors="coerce").dt.strftime("%d/%m/%Y")
-    df['fecha'] = pd.to_datetime(df.iloc[:, 13].astype(str).str.replace(".", "/").str.strip(),format="%d/%m/%Y", errors="coerce").dt.strftime("%d/%m/%Y")
+    
+    # Columnas de fechas
+    df['fecha_ope'] = pd.to_datetime(
+        df.iloc[:, 3].astype(str).str.strip(),
+        format="%d.%m.%y",
+        errors="coerce"
+    ).dt.strftime("%d/%m/%Y")
+
+    df['fecha'] = pd.to_datetime(
+        df.iloc[:, 13].astype(str).str.strip(),
+        format="%d.%m.%y",
+        errors="coerce"
+    ).dt.strftime("%d/%m/%Y")
+
     df['día'] = pd.to_datetime(df['fecha_ope'], format="%d/%m/%Y", errors="coerce").dt.day
-    df['numero'] = df.iloc[:, 6].astype(str)
+    
+    df['numero'] = df.iloc[:, 6].astype(str).str.lstrip('0')
+
     df['tipo_transaccion'] = df['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
     df['i'] = ""
     df['descripcion'] = ""
     df['it'] = df.iloc[:, 9].astype(str)
     df['provisional'] = ""
-    df['importe'] = pd.to_numeric(df.iloc[:, 10])
 
-    df['nid'] = pd.to_numeric(df.iloc[:, 18])
-    df['referencia'] = pd.to_numeric(df.iloc[:, 19])
+    # Importe como número (float)
+    df['importe'] = pd.to_numeric(df.iloc[:, 10],errors="coerce").fillna(0)
 
-    df_final = df[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe', 'nid', 'referencia']]
+    # Transformar la columna 'nit' 
+    df['nit'] = (
+        df.iloc[:, 16]
+        .astype(str)                            # aseguramos string
+        .str.upper()                            # estandarizamos mayúsculas
+        .str.replace(r"[A-Z]", "", regex=True)  # quitamos cualquier letra
+        .str.strip()                            # quitamos espacios en blanco    
+        .str.lstrip('0')                        # quitamos ceros a la izquierda 
+    )
+
+    # Función para aplicar la regla de los 10 dígitos
+    def limpiar_nit(valor):
+        if not valor or not isinstance(valor, str):  
+            return valor
+        if re.fullmatch(r"\d{10}", valor):    # si tiene exactamente 10 dígitos
+            if 800 <= int(valor[:3]) <= 999:  # si empieza entre 800 y 999
+                return valor[:-1]             # quitamos el último dígito
+        return valor  # si no cumple, lo dejamos igual
+
+    df['nit'] = df['nit'].apply(limpiar_nit)
+
+    df['nid'] = df.iloc[:, 18].astype(str).str.lstrip('0')
+    df['referencia'] = df.iloc[:, 21].astype(str).str.lstrip('0')
+
+    df_final = df[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe','nit','nid', 'referencia']]
     return df_final
 
 # -------------------------- Interfaz Streamlit --------------------------
@@ -164,11 +203,28 @@ if archivo is not None: #Asegurarse de que se ha cargado un archivo
 # ---- Descargar en Excel ----
         buffer = BytesIO()
         df_transformado.to_excel(buffer, index=False, engine='openpyxl')
-        buffer.seek(0)
+        buffer.seek(0)  
+
+
+        # Aplicar formato con openpyxl
+        wb = load_workbook(buffer)
+        ws = wb.active
+
+        # Ubicar la columna "importe" (posición 12 en df_final)
+        col_importe = df_transformado.columns.get_loc("importe") + 1
+
+        for row in ws.iter_rows(min_row=2, min_col=col_importe, max_col=col_importe):
+            for cell in row:
+                cell.number_format = '#,##0.00;[Red]-#,##0.00' # miles con "." y decimales con "," y negativos en rojo        
+
+        # Guardar en nuevo buffer
+        buffer_final = BytesIO()
+        wb.save(buffer_final)
+        buffer_final.seek(0)
 
         st.download_button(
             label="📥 Descargar en Excel",
-            data=buffer,
+            data=buffer_final,
             file_name="extracto_BDB_transformado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
