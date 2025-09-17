@@ -53,7 +53,9 @@ if archivo is not None: #Asegurarse de que se ha cargado un archivo
         st.error(f"❌ Error al procesar el archivo: {e}"
 )
 
-# -------------------------- Función Banco de Bogotá --------------------------
+# ------------------------------------------------------------
+#               Bancos de Colombia 
+#  ------------------------------------------------------------
 
 codigos_dict = {
     "304": "Pago Tarjeta de Credito Banco Bogota Internet o Banca Movil",
@@ -122,16 +124,97 @@ codigos_dict = {
     "938": "Devolucion IVA por ajuste a una comision",
 }
 
-def transformar_extracto_bdb(df):
-    
-    df = df.copy()
+cuentas_bancos = {
+    1: {"CUENTA": "291252245", "BANCO": "BANCO DE BOGOTÁ"},
+    2: {"CUENTA": "223589391", "BANCO": "BANCO DE BOGOTÁ"},
+    3: {"CUENTA": "040-000016-02", "BANCO": "BANCOLOMBIA"},
+    4: {"CUENTA": "040-000068-06", "BANCO": "BANCOLOMBIA"},
+    5: {"CUENTA": "040-000054-70", "BANCO": "BANCOLOMBIA"},
+    6: {"CUENTA": "040-000038-64", "BANCO": "BANCOLOMBIA"},
+    7: {"CUENTA": "040-000077-86", "BANCO": "BANCOLOMBIA"},
+    9: {"CUENTA": "040-000045-62", "BANCO": "BANCOLOMBIA"},
+    12: {"CUENTA": "4851-0000-3964", "BANCO": "DAVIVIENDA"},
+    13: {"CUENTA": "4851-6999-6280", "BANCO": "DAVIVIENDA"},
+    14: {"CUENTA": "IRIS 100598509191", "BANCO": "BANCO IRIS"},
+    15: {"CUENTA": "FIC # 8287-1", "BANCO": "CORR DAVIVIENDA"},
+    16: {"CUENTA": "FIC # 8287-3", "BANCO": "CORR DAVIVIENDA"},
+    17: {"CUENTA": "FIC # 8287-4", "BANCO": "CORR DAVIVIENDA"},
+    18: {"CUENTA": "2570", "BANCO": "BANCO GNB SUDAMERIS"},
+    19: {"CUENTA": "2580", "BANCO": "BANCO GNB SUDAMERIS"},
+    20: {"CUENTA": "0011-8", "BANCO": "RENTA 4"},
+    21: {"CUENTA": "0164-0", "BANCO": "RENTA 4"},
+    23: {"CUENTA": "BBVA 0016", "BANCO": "BBVA"},
+    25: {"CUENTA": "171-2", "BANCO": "BANCO CREDICORP"},
+}
 
-    df['id'] = df.iloc[:, 0]
-    df['cuenta'] = df.iloc[:, 1].astype(str)
+# 1. Diccionario de reglas por banco 
+
+reglas_bancos = {
+    "Banco de Bogotá": {
+        "columnas": {
+            "cuenta": 1,
+            "fecha_ope": 3,
+            "fecha": 13,
+            "numero": 6,
+            "it": 9,
+            "importe": 10,
+            "nit": 16,
+            "nid": 18,
+            "referencia": 21
+        },
+        "formato_fecha": "%d.%m.%y",
+        "separador_miles": ".",
+        "separador_decimales": ",",
+        "codigo_tipo_transaccion": codigos_dict,
+        "id": cuentas_bancos
+    },
+
+    "Bancolombia": {
+        "columnas": {
+            "cuenta": 0,
+            "fecha_ope": 3,
+            "fecha": 3,
+            "numero": 6,
+            "tipo_transaccion": 7,
+            "importe": 5
+        },
+        "formato_fecha": "%d.%m.%y",
+        "separador_miles": ".",
+        "separador_decimales": ",",
+        "id": cuentas_bancos
+    }  
+}
+
+# 2. Función de limpieza de NIT
+
+# Aplicar la regla de los 10 dígitos
+def limpiar_nit(valor):
+    if not valor or not isinstance(valor, str):  
+        return valor
+    if re.fullmatch(r"\d{10}", valor):    # si tiene exactamente 10 dígitos
+        if 800 <= int(valor[:3]) <= 999:  # si empieza entre 800 y 999
+            return valor[:-1]             # quitamos el último dígito
+    return valor                          # si no cumple, lo dejamos igual
+
+
+# 3. Función genérica de transformación para bancos de Colombia
+
+def transformar_extracto(df,banco):
+    reglas = reglas_bancos.get(banco)
+    columnas = reglas['columnas']
+
+    # df = df.copy()
+
+    df_out = pd.DataFrame()
+
+    # Mapear columnas según reglas
+
+    df_out = ['id'] = df['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')
+    df_out = ['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
     
-    # Columnas de fechas
-    df['fecha_ope'] = pd.to_datetime(
-        df.iloc[:, 3].astype(str).str.strip(),
+        # Columnas de fechas
+    df_out['fecha_ope'] = pd.to_datetime(
+        df.iloc[:, columnas['fecha_ope']].astype(str).str.strip(),
         format="%d.%m.%y",
         errors="coerce"
     ).dt.strftime("%d/%m/%Y")
@@ -163,18 +246,8 @@ def transformar_extracto_bdb(df):
         .str.replace(r"[A-Z]", "", regex=True)  # quitamos cualquier letra
         .str.strip()                            # quitamos espacios en blanco    
         .str.lstrip('0')                        # quitamos ceros a la izquierda 
+        .apply(limpiar_nit)                     # aplicamos la regla de los 10 dígitos
     )
-
-    # Función para aplicar la regla de los 10 dígitos
-    def limpiar_nit(valor):
-        if not valor or not isinstance(valor, str):  
-            return valor
-        if re.fullmatch(r"\d{10}", valor):    # si tiene exactamente 10 dígitos
-            if 800 <= int(valor[:3]) <= 999:  # si empieza entre 800 y 999
-                return valor[:-1]             # quitamos el último dígito
-        return valor  # si no cumple, lo dejamos igual
-
-    df['nit'] = df['nit'].apply(limpiar_nit)
 
     df['nid'] = df.iloc[:, 18].astype(str).str.lstrip('0')
     df['referencia'] = df.iloc[:, 21].astype(str).str.lstrip('0')
