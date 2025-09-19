@@ -4,6 +4,10 @@ from io import BytesIO
 from openpyxl import load_workbook
 import re
 
+# ------------------------------------------------------------
+#               Bancos de México 
+#  ------------------------------------------------------------
+
 def transformar_extracto_bbva(df):
     df = df.copy()
 
@@ -178,7 +182,6 @@ reglas_bancos = {
             "tipo_transaccion": 7,
             "importe": 5
         },
-        "formato_fecha": "%d.%m.%y",
         "separador_miles": ".",
         "separador_decimales": ",",
         "id": cuentas_bancos
@@ -197,13 +200,47 @@ def limpiar_nit(valor):
     return valor                          # si no cumple, lo dejamos igual
 
 
-# 3. Función genérica de transformación para bancos de Colombia
+# 3. Función para parsear múltiples formatos de fecha
+
+formatos_fecha = [
+    "%d.%m.%y",
+    "%d.%m.%Y"
+    "%d/%m/%Y",
+    "%Y%m%d",
+    "%Y-%m-%d",
+    "%d-%m-%Y"
+]
+
+def parsear_fecha_multiple(valor):
+    """Intenta convertir un valor a tipo de dato fecha probando varios formatos."""
+    if pd.isna(valor):              
+        return pd.NaT               
+    valor = str(valor).strip()      
+    for formato in formatos_fecha:  
+        try:
+            return pd.to_datetime(valor, format=formato, errors="raise")
+        except:
+            continue
+    return pd.NaT
+def parsear_fecha_multiple(valor):
+    """Intenta convertir un valor a fecha probando varios formatos."""
+    if pd.isna(valor):              # Verifica si el valor está vacío o es nulo
+        return pd.NaT               # Si el valor es nulo (por ejemplo, está vacío o es NaN), devuelve pd.NaT (que significa "Not a Time", es decir, no hay fecha).
+    valor = str(valor).strip()      # Convierte el valor a texto y elimina espacios en blanco al inicio y al final
+    for formato in formatos_fecha:  # Intenta convertir el valor a fecha usando varios formatos
+        try:
+            return pd.to_datetime(valor, format=formato, errors="raise")
+        except:
+            continue
+    return pd.NaT
+
+# 4. Función genérica de transformación para bancos de Colombia
 
 def transformar_extracto(df,banco):
     reglas = reglas_bancos.get(banco)
     columnas = reglas['columnas']
 
-    # df = df.copy()
+    # df = df.copy() ---- OJOOOOOO!!!!. VALIDAR SI REQUIERO ESTA PARTE AL NUEVO CÓDIGO
 
     df_out = pd.DataFrame()
 
@@ -211,36 +248,40 @@ def transformar_extracto(df,banco):
 
     df_out = ['id'] = df['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')
     df_out = ['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
+    df_out['numero'] = df.iloc[:, columnas ['número']].astype(str).str.lstrip('0')
+    df_out['tipo_transaccion'] = df['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
+    df_out['i'] = ""
+    df_out['descripcion'] = ""
+    df_out['it'] = df.iloc[:, columnas['it']].astype(str)
+    df_out['provisional'] = ""
+        # Importe como número (float)
+    df_out['importe'] = pd.to_numeric(df.iloc[:, columnas['importe']],errors="coerce").fillna(0)
+
+        # Columnas de fechas con función automática
     
-        # Columnas de fechas
-    df_out['fecha_ope'] = pd.to_datetime(
-        df.iloc[:, columnas['fecha_ope']].astype(str).str.strip(),
-        format="%d.%m.%y",
-        errors="coerce"
-    ).dt.strftime("%d/%m/%Y")
+    df_out['fecha_ope'] = (
+        df.iloc[:, columnas['fecha_ope']]
+        .astype(str)
+        .str.replaace(".","/")
+        .str.strip()
+        .apply(parsear_fecha_multiple)
+        .dt.strftime("%d/%m/%Y")
+    )
 
-    df['fecha'] = pd.to_datetime(
-        df.iloc[:, 13].astype(str).str.strip(),
-        format="%d.%m.%y",
-        errors="coerce"
-    ).dt.strftime("%d/%m/%Y")
+    df_out['fecha'] = (
+        df.iloc[:, columnas['fecha']]
+        .astype(str)
+        .str.replaace(".","/")
+        .str.strip()
+        .apply (parsear_fecha_multiple)
+        .dt.strftime("%d/%m/%Y")
+    )
 
-    df['día'] = pd.to_datetime(df['fecha_ope'], format="%d/%m/%Y", errors="coerce").dt.day
+    df_out['día'] = pd.to_datetime(df_out['fecha_ope'], format="%d/%m/%Y", errors="coerce").dt.day  
     
-    df['numero'] = df.iloc[:, 6].astype(str).str.lstrip('0')
-
-    df['tipo_transaccion'] = df['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
-    df['i'] = ""
-    df['descripcion'] = ""
-    df['it'] = df.iloc[:, 9].astype(str)
-    df['provisional'] = ""
-
-    # Importe como número (float)
-    df['importe'] = pd.to_numeric(df.iloc[:, 10],errors="coerce").fillna(0)
-
-    # Transformar la columna 'nit' 
-    df['nit'] = (
-        df.iloc[:, 16]
+        # Transformar la columna 'nit' 
+    df_out['nit'] = (
+        df.iloc[:, columnas['nit']]
         .astype(str)                            # aseguramos string
         .str.upper()                            # estandarizamos mayúsculas
         .str.replace(r"[A-Z]", "", regex=True)  # quitamos cualquier letra
@@ -249,31 +290,51 @@ def transformar_extracto(df,banco):
         .apply(limpiar_nit)                     # aplicamos la regla de los 10 dígitos
     )
 
-    df['nid'] = df.iloc[:, 18].astype(str).str.lstrip('0')
-    df['referencia'] = df.iloc[:, 21].astype(str).str.lstrip('0')
+    df_out['nid'] = df.iloc[:, columnas['nid']].astype(str).str.lstrip('0')
+    df_out['referencia'] = df.iloc[:, columnas['referencia']].astype(str).str.lstrip('0')   
 
-    df_final = df[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe','nit','nid', 'referencia']]
+    df_final = df_out[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe','nit','nid', 'referencia']]
     return df_final
 
 # -------------------------- Interfaz Streamlit --------------------------
 
-st.subheader("🏦 Banco de Bogotá")
+st.subheader("🏦 Bancos de Colombia")
 
 # Subir archivo
-archivo = st.file_uploader("📂 Carga el archivo TXT del extracto", type=["txt"])
+archivos = st.file_uploader(
+    "📂 Carga tus extracto",
+    type=["txt","csv", "xlsx"],
+    accept_multiple_files=True)
 
-if archivo is not None: #Asegurarse de que se ha cargado un archivo
-    try:
-        df = pd.read_csv(archivo, sep=';', decimal=",", encoding='latin1', header=None)
-        st.success("Archivo cargado correctamente ✅")
+if archivo is not None: # Verifica si hay archivos cargados
+    for archivo in archivos:
+        try:
+            nombre = archivo.name.lower()
+
+            # Detectar tipo de archivo por extensión
+            if nombre.endswith(".txt"):
+                df = pd.read_csv(archivo, sep=';', decimal=",", encoding='latin1', header=None)
         
-        df_transformado = transformar_extracto_bdb(df)
+            elif nombre.endswith(".csv"):
+                df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None)
+
+            elif nombre.endswith(".xlsx"):
+                df = pd.read_excel(archivo, header=None)
+
+            st.success(f"Archivo '{archivo.name}' cargado correctamente ✅")
         
-        st.subheader("Vista previa del archivo transformado:")
-        st.dataframe(df_transformado)
+            # Aplica tu función de transformación
+            df_transformado = transformar_extracto(df)
+        
+            st.subheader("Vista previa del archivo transformado: {archivo.name}")
+            st.dataframe(df_transformado)
+
+        except Exception as e: 
+            st.error(f"❌ Error al procesar el archivo: {e}"
+)
 
 
-# ---- Descargar en Excel ----
+# Descargar archivo en Excel
         buffer = BytesIO()
         df_transformado.to_excel(buffer, index=False, engine='openpyxl')
         buffer.seek(0)  
@@ -298,10 +359,6 @@ if archivo is not None: #Asegurarse de que se ha cargado un archivo
         st.download_button(
             label="📥 Descargar en Excel",
             data=buffer_final,
-            file_name="extracto_BDB_transformado.xlsx",
+            file_name="extractos_transformados.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-    except Exception as e: 
-        st.error(f"❌ Error al procesar el archivo: {e}"
-)
