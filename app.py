@@ -4,6 +4,8 @@ from io import BytesIO
 from openpyxl import load_workbook
 import re
 
+
+
 # ------------------------------------------------------------
 #               Bancos de México 
 #  ------------------------------------------------------------
@@ -129,26 +131,26 @@ codigos_dict = {
 }
 
 cuentas_bancos = {
-    1: {"CUENTA": "291252245", "BANCO": "BANCO DE BOGOTÁ"},
-    2: {"CUENTA": "223589391", "BANCO": "BANCO DE BOGOTÁ"},
-    3: {"CUENTA": "040-000016-02", "BANCO": "BANCOLOMBIA"},
-    4: {"CUENTA": "040-000068-06", "BANCO": "BANCOLOMBIA"},
-    5: {"CUENTA": "040-000054-70", "BANCO": "BANCOLOMBIA"},
-    6: {"CUENTA": "040-000038-64", "BANCO": "BANCOLOMBIA"},
-    7: {"CUENTA": "040-000077-86", "BANCO": "BANCOLOMBIA"},
-    9: {"CUENTA": "040-000045-62", "BANCO": "BANCOLOMBIA"},
-    12: {"CUENTA": "4851-0000-3964", "BANCO": "DAVIVIENDA"},
-    13: {"CUENTA": "4851-6999-6280", "BANCO": "DAVIVIENDA"},
-    14: {"CUENTA": "IRIS 100598509191", "BANCO": "BANCO IRIS"},
-    15: {"CUENTA": "FIC # 8287-1", "BANCO": "CORR DAVIVIENDA"},
-    16: {"CUENTA": "FIC # 8287-3", "BANCO": "CORR DAVIVIENDA"},
-    17: {"CUENTA": "FIC # 8287-4", "BANCO": "CORR DAVIVIENDA"},
-    18: {"CUENTA": "2570", "BANCO": "BANCO GNB SUDAMERIS"},
-    19: {"CUENTA": "2580", "BANCO": "BANCO GNB SUDAMERIS"},
-    20: {"CUENTA": "0011-8", "BANCO": "RENTA 4"},
-    21: {"CUENTA": "0164-0", "BANCO": "RENTA 4"},
-    23: {"CUENTA": "BBVA 0016", "BANCO": "BBVA"},
-    25: {"CUENTA": "171-2", "BANCO": "BANCO CREDICORP"},
+    "291252245": 1,
+    "223589391": 2,
+    "040-000016-02": 3,
+    "040-000068-06": 4,
+    "040-000054-70": 5,
+    "040-000038-64": 6,
+    "040-000077-86": 7,
+    "040-000045-62": 9,
+    "4851-0000-3964": 12,
+    "4851-6999-6280": 13,
+    "IRIS 100598509191": 14,
+    "FIC # 8287-1": 15,
+    "FIC # 8287-3": 16,
+    "FIC # 8287-4": 17,
+    "2570": 18,
+    "2580": 19,
+    "0011-8": 20,
+    "0164-0": 21,
+    "BBVA 0016": 23,
+    "171-2": 25
 }
 
 # 1. Diccionario de reglas por banco 
@@ -166,7 +168,6 @@ reglas_bancos = {
             "nid": 18,
             "referencia": 21
         },
-        "formato_fecha": "%d.%m.%y",
         "separador_miles": ".",
         "separador_decimales": ",",
         "codigo_tipo_transaccion": codigos_dict,
@@ -180,7 +181,7 @@ reglas_bancos = {
             "fecha": 3,
             "numero": 6,
             "tipo_transaccion": 7,
-            "importe": 5
+            "importe": 5            
         },
         "separador_miles": ".",
         "separador_decimales": ",",
@@ -204,24 +205,13 @@ def limpiar_nit(valor):
 
 formatos_fecha = [
     "%d.%m.%y",
-    "%d.%m.%Y"
+    "%d.%m.%Y",
     "%d/%m/%Y",
     "%Y%m%d",
     "%Y-%m-%d",
     "%d-%m-%Y"
 ]
 
-def parsear_fecha_multiple(valor):
-    """Intenta convertir un valor a tipo de dato fecha probando varios formatos."""
-    if pd.isna(valor):              
-        return pd.NaT               
-    valor = str(valor).strip()      
-    for formato in formatos_fecha:  
-        try:
-            return pd.to_datetime(valor, format=formato, errors="raise")
-        except:
-            continue
-    return pd.NaT
 def parsear_fecha_multiple(valor):
     """Intenta convertir un valor a fecha probando varios formatos."""
     if pd.isna(valor):              # Verifica si el valor está vacío o es nulo
@@ -237,61 +227,78 @@ def parsear_fecha_multiple(valor):
 # 4. Función genérica de transformación para bancos de Colombia
 
 def transformar_extracto(df,banco):
+    if banco not in reglas_bancos:
+        raise ValueError(f"No hay reglas definidas para el banco '{banco}'")
+
     reglas = reglas_bancos.get(banco)
     columnas = reglas['columnas']
 
-    # df = df.copy() ---- OJOOOOOO!!!!. VALIDAR SI REQUIERO ESTA PARTE AL NUEVO CÓDIGO
-
-    df_out = pd.DataFrame()
-
+    df_out = df.copy()
+    
     # Mapear columnas según reglas
+    
+    df_out['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
+    df_out['id'] = df_out['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')
+    df_out['numero'] = df.iloc[:, columnas ['numero']].astype(str).str.lstrip('0')
+    
+        # Columna tipo_transaccion
 
-    df_out = ['id'] = df['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')
-    df_out = ['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
-    df_out['numero'] = df.iloc[:, columnas ['número']].astype(str).str.lstrip('0')
-    df_out['tipo_transaccion'] = df['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
-    df_out['i'] = ""
-    df_out['descripcion'] = ""
-    df_out['it'] = df.iloc[:, columnas['it']].astype(str)
-    df_out['provisional'] = ""
-        # Importe como número (float)
-    df_out['importe'] = pd.to_numeric(df.iloc[:, columnas['importe']],errors="coerce").fillna(0)
+    if 'tipo_transaccion' in columnas:
+        # Si existe la columna, solo muestra el valor tal cual (como texto)
+        df_out['tipo_transaccion'] = df.iloc[:, columnas ['tipo_transaccion']].astype(str)
+    else: 
+        # Si no existe la columna, busca el código en el diccionario, si no existe muestra 'Desconocido'
+        df_out['tipo_transaccion'] = df_out['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
 
         # Columnas de fechas con función automática
-    
     df_out['fecha_ope'] = (
         df.iloc[:, columnas['fecha_ope']]
         .astype(str)
-        .str.replaace(".","/")
         .str.strip()
         .apply(parsear_fecha_multiple)
-        .dt.strftime("%d/%m/%Y")
     )
+    df_out['fecha_ope'] = df_out['fecha_ope'].dt.strftime("%d/%m/%Y")
 
     df_out['fecha'] = (
         df.iloc[:, columnas['fecha']]
         .astype(str)
-        .str.replaace(".","/")
         .str.strip()
         .apply (parsear_fecha_multiple)
-        .dt.strftime("%d/%m/%Y")
     )
+    df_out['fecha'] = df_out['fecha'].dt.strftime("%d/%m/%Y")
 
     df_out['día'] = pd.to_datetime(df_out['fecha_ope'], format="%d/%m/%Y", errors="coerce").dt.day  
-    
-        # Transformar la columna 'nit' 
-    df_out['nit'] = (
-        df.iloc[:, columnas['nit']]
-        .astype(str)                            # aseguramos string
+
+        # Importe como número (float)
+    df_out['importe'] = pd.to_numeric(df.iloc[:, columnas['importe']],errors="coerce").fillna(0)
+   
+    df_out['i'] = ""
+    df_out['descripcion'] = ""
+    df_out['provisional'] = ""
+
+            # Columnas opcionales
+    opcionales = {
+        'nit': lambda s: 
+        s.astype(str)                            # aseguramos string
         .str.upper()                            # estandarizamos mayúsculas
         .str.replace(r"[A-Z]", "", regex=True)  # quitamos cualquier letra
         .str.strip()                            # quitamos espacios en blanco    
         .str.lstrip('0')                        # quitamos ceros a la izquierda 
-        .apply(limpiar_nit)                     # aplicamos la regla de los 10 dígitos
-    )
+        .apply(limpiar_nit),                     # aplicamos la regla de los 10 dígitos
+        
+        'it': lambda s: s.astype(str),
+        'nid': lambda s: s.astype(str).str.lstrip('0'),
+        'referencia': lambda s: s.astype(str).str.lstrip('0')
+    }
 
-    df_out['nid'] = df.iloc[:, columnas['nid']].astype(str).str.lstrip('0')
-    df_out['referencia'] = df.iloc[:, columnas['referencia']].astype(str).str.lstrip('0')   
+    for col, func in opcionales.items():
+        if col in columnas:
+            df_out[col] = func(df.iloc[:, columnas[col]])
+        else:
+            df_out[col] = ""
+    
+
+
 
     df_final = df_out[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe','nit','nid', 'referencia']]
     return df_final
@@ -300,13 +307,24 @@ def transformar_extracto(df,banco):
 
 st.subheader("🏦 Bancos de Colombia")
 
+#Seleccionar banco
+banco_seleccionado = st.selectbox(
+    "Selecciona el banco del extracto",
+    options=list(reglas_bancos.keys())
+)
 # Subir archivo
 archivos = st.file_uploader(
-    "📂 Carga tus extracto",
+    "📂 Carga tus extractos",
     type=["txt","csv", "xlsx"],
     accept_multiple_files=True)
 
-if archivo is not None: # Verifica si hay archivos cargados
+
+# Lista para guardar los resultados de cada archivo transformado
+
+dfs_transformados = []
+
+if archivos is not None: # Verifica si hay archivos cargados
+    archivos_cargados = []
     for archivo in archivos:
         try:
             nombre = archivo.name.lower()
@@ -314,51 +332,75 @@ if archivo is not None: # Verifica si hay archivos cargados
             # Detectar tipo de archivo por extensión
             if nombre.endswith(".txt"):
                 df = pd.read_csv(archivo, sep=';', decimal=",", encoding='latin1', header=None)
-        
             elif nombre.endswith(".csv"):
                 df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None)
-
             elif nombre.endswith(".xlsx"):
                 df = pd.read_excel(archivo, header=None)
+            else:
+                st.warning(f"Formato no compatible: {archivo.name}")
+                continue    
 
-            st.success(f"Archivo '{archivo.name}' cargado correctamente ✅")
+                  
+            # Transformar archivo
+            df_transformado = transformar_extracto(df, banco=banco_seleccionado)
+            dfs_transformados.append(df_transformado)
+
+            archivos_cargados.append(f"✅ {archivo.name}")
         
-            # Aplica tu función de transformación
-            df_transformado = transformar_extracto(df)
-        
-            st.subheader("Vista previa del archivo transformado: {archivo.name}")
-            st.dataframe(df_transformado)
+            #Guadar en la lista
+            dfs_transformados.append(df_transformado)
 
         except Exception as e: 
-            st.error(f"❌ Error al procesar el archivo: {e}"
-)
+            archivos_cargados.append(f"❌ {archivo.name} (Error: {e})")     
+    
+    # Mostrar resumen en un expander
+    with st.expander("Ver archivos cargados y estado"):
+        for estado in archivos_cargados:
+            st.write(estado)
 
+    if dfs_transformados:
+        df_transformado = pd.concat(dfs_transformados, ignore_index=True)
 
-# Descargar archivo en Excel
+        st.success("✅ Archivos procesados y consolidados correctamente") 
+
+        # Ordenar por id de forma ascendente
+        df_transformado = df_transformado.sort_values(by="id", ascending=True).reset_index(drop=True)
+
+            # Mostrar vista previa del consolidado
+        st.subheader(f"Vista previa:")
+        st.dataframe(df_transformado.head(5))   
+            
+            # Descargar archivo en Excel
         buffer = BytesIO()
         df_transformado.to_excel(buffer, index=False, engine='openpyxl')
-        buffer.seek(0)  
+        buffer.seek(0)
 
-
-        # Aplicar formato con openpyxl
+            # Aplicar formato con openpyxl
         wb = load_workbook(buffer)
-        ws = wb.active
+        ws = wb.active        
 
-        # Ubicar la columna "importe" (posición 12 en df_final)
-        col_importe = df_transformado.columns.get_loc("importe") + 1
+            
+        if "importe" in df_transformado.columns:
+            # Ubicar la columna "importe" (posición 12 en df_final)
+            col_importe = df_transformado.columns.get_loc('importe') + 1
+            for row in ws.iter_rows(min_row=2, min_col=col_importe, max_col=col_importe):
+                for cell in row:
+                    cell.number_format = '#,##0.00;[Red]-#,##0.00' # miles con "." y decimales con "," y negativos en rojo        
 
-        for row in ws.iter_rows(min_row=2, min_col=col_importe, max_col=col_importe):
-            for cell in row:
-                cell.number_format = '#,##0.00;[Red]-#,##0.00' # miles con "." y decimales con "," y negativos en rojo        
+            # Guardar en nuevo buffer
+            buffer_final = BytesIO()
+            wb.save(buffer_final)
+            buffer_final.seek(0)
 
-        # Guardar en nuevo buffer
-        buffer_final = BytesIO()
-        wb.save(buffer_final)
-        buffer_final.seek(0)
+            st.download_button(
+                label="📥 Descargar extractos consolidados",
+                data=buffer_final,
+                file_name="extractos_transformados.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )  
 
-        st.download_button(
-            label="📥 Descargar en Excel",
-            data=buffer_final,
-            file_name="extractos_transformados.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+
+
+
+
+
