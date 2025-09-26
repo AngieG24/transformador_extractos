@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
+from pathlib import Path
 import re
 
 
-
-# ------------------------------------------------------------
-#               Bancos de México 
-#  ------------------------------------------------------------
+# -------------------------------------------------------------------------
+#                             Bancos de México 
+#  ------------------------------------------------------------------------
 
 def transformar_extracto_bbva(df):
     df = df.copy()
@@ -26,7 +26,7 @@ def transformar_extracto_bbva(df):
 
 st.title("Transformador de Extractos")
 
-st.subheader("🏦 BBVA")
+st.subheader("🏦 Bancos de México")
 
 # Subir archivo
 archivo = st.file_uploader("📂 Carga el archivo Excel del extracto", type=["xlsx", "xls"])
@@ -59,9 +59,12 @@ if archivo is not None: #Asegurarse de que se ha cargado un archivo
         st.error(f"❌ Error al procesar el archivo: {e}"
 )
 
-# ------------------------------------------------------------
-#               Bancos de Colombia 
-#  ------------------------------------------------------------
+# -----------------------------------------------------------------------
+#                             Bancos de Colombia 
+#  ----------------------------------------------------------------------
+
+# 1. Diccionarios
+# 1.1 Diccionario de códigos y su descripción
 
 codigos_dict = {
     "304": "Pago Tarjeta de Credito Banco Bogota Internet o Banca Movil",
@@ -130,6 +133,8 @@ codigos_dict = {
     "938": "Devolucion IVA por ajuste a una comision",
 }
 
+# 1.2 Diccionario de cuentas y su ID
+
 cuentas_bancos = {
     "291252245": 1,
     "223589391": 2,
@@ -186,8 +191,23 @@ reglas_bancos = {
         "separador_miles": ".",
         "separador_decimales": ",",
         "id": cuentas_bancos
-    }  
+    },
+
+    "Davivienda": {
+        "columnas": {
+            "fecha_ope": 0,
+            "fecha": 0,
+            "numero": 6,
+            "tipo_transaccion": 7,
+            "importe": 8,
+            "referencia": 2
+        },
+        "separador_miles": ",",
+        "separador_decimales": ".",
+        "id": cuentas_bancos
+    } 
 }
+
 
 # 2. Función de limpieza de NIT
 
@@ -226,7 +246,13 @@ def parsear_fecha_multiple(valor):
 
 # 4. Función genérica de transformación para bancos de Colombia
 
-def transformar_extracto(df,banco):
+def transformar_extracto(df,banco, archivo=None):
+    """"
+    df: DataFrame leido del archivo
+    banco: nombre del banco en reglas_bancos
+    archivo: objeto uploaded file de Streamlit (para extraer nombre)
+    """
+
     if banco not in reglas_bancos:
         raise ValueError(f"No hay reglas definidas para el banco '{banco}'")
 
@@ -236,21 +262,21 @@ def transformar_extracto(df,banco):
     df_out = df.copy()
     
     # Mapear columnas según reglas
-    
-    df_out['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
-    df_out['id'] = df_out['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')
-    df_out['numero'] = df.iloc[:, columnas ['numero']].astype(str).str.lstrip('0')
-    
-        # Columna tipo_transaccion
 
+        # ✅ Columna: número
+    df_out['numero'] = df.iloc[:, columnas ['numero']].astype(str).str.lstrip('0')
+
+        
+        # ✅ Columna: tipo_transaccion
     if 'tipo_transaccion' in columnas:
-        # Si existe la columna, solo muestra el valor tal cual (como texto)
+            # Si existe la columna, solo muestra el valor tal cual (como texto)
         df_out['tipo_transaccion'] = df.iloc[:, columnas ['tipo_transaccion']].astype(str)
     else: 
-        # Si no existe la columna, busca el código en el diccionario, si no existe muestra 'Desconocido'
+            # Si no existe la columna, busca el código en el diccionario, si no existe muestra 'Desconocido'
         df_out['tipo_transaccion'] = df_out['numero'].astype(str).map(codigos_dict).fillna('Desconocido')
 
-        # Columnas de fechas con función automática
+        
+        # ✅ Columnas: fechas
     df_out['fecha_ope'] = (
         df.iloc[:, columnas['fecha_ope']]
         .astype(str)
@@ -269,26 +295,24 @@ def transformar_extracto(df,banco):
 
     df_out['día'] = pd.to_datetime(df_out['fecha_ope'], format="%d/%m/%Y", errors="coerce").dt.day  
 
-        # Importe como número (float)
+
+        # ✅ Importe como número (float)
     df_out['importe'] = pd.to_numeric(df.iloc[:, columnas['importe']],errors="coerce").fillna(0)
    
-    df_out['i'] = ""
-    df_out['descripcion'] = ""
-    df_out['provisional'] = ""
 
-            # Columnas opcionales
+        # ✅ Columnas opcionales
     opcionales = {
         'nit': lambda s: 
-        s.astype(str)                            # aseguramos string
+        s.astype(str)                           # aseguramos string
         .str.upper()                            # estandarizamos mayúsculas
         .str.replace(r"[A-Z]", "", regex=True)  # quitamos cualquier letra
         .str.strip()                            # quitamos espacios en blanco    
         .str.lstrip('0')                        # quitamos ceros a la izquierda 
-        .apply(limpiar_nit),                     # aplicamos la regla de los 10 dígitos
+        .apply(limpiar_nit),                    # aplicamos la regla de los 10 dígitos
         
         'it': lambda s: s.astype(str),
         'nid': lambda s: s.astype(str).str.lstrip('0'),
-        'referencia': lambda s: s.astype(str).str.lstrip('0')
+        'referencia': lambda s: s.astype(str).str.lstrip('0').str.upper()
     }
 
     for col, func in opcionales.items():
@@ -296,10 +320,45 @@ def transformar_extracto(df,banco):
             df_out[col] = func(df.iloc[:, columnas[col]])
         else:
             df_out[col] = ""
-    
 
 
+        # ✅ Columnas vacías obligatorias para mantener estructura
+    df_out['i'] = ""
+    df_out['descripcion'] = ""
+    df_out['provisional'] = ""
 
+
+        # ✅ Otros mapeos: Caso especial Davivienda-> Columna 'cuenta' se alimenta del nombre de archivo
+    if banco == "Davivienda":
+        if archivo is not None:
+            nombre_archivo = archivo.name # Obtener el nombre del archivo cargado            
+                    
+                # limpiar el nombre para quitar caracteres raros y extraer el nombre sin extensión
+            numero_cuenta =  re.sub(r'[^A-Za-z0-9_\-]', '',Path(nombre_archivo).stem) 
+            df_out['cuenta'] = numero_cuenta
+        else:
+                # Si por alguna razón no tiene nombre_archivo, deja vacío
+                df_out['cuenta'] = ""
+
+                # Columna 'importe': según referencia (CREDITO -> positivo) (DEBITO -> negativo)
+                referencia_davivienda = df_out['referencia'].fillna("").astype(str).str.upper()
+                df_out['importe'] =df_out['importe'].where(referencia_davivienda.str.contains("DEBITO"), -df_out['importe'])
+              
+                # mapear id por cuenta (si la cuenta está en el diccionario)
+                df_out['id'] = df_out['cuenta'].map(cuentas_bancos).fillna('Desconocido')        
+                
+    else:
+                # Otros bancos: cuenta viene de columna indicada en reglas
+                # Protegemos el acceso por si falta la clave 'cuenta' en reglas
+                
+        if 'cuenta' in columnas:        
+                df_out['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str)
+        else:
+                df_out['cuenta'] = ""
+    df_out['id'] = df_out['cuenta'].astype(str).map(cuentas_bancos).fillna('Desconocido')  
+
+
+    # ✅ Estructura final
     df_final = df_out[['id', 'cuenta', 'fecha_ope', 'fecha', 'día', 'numero', 'tipo_transaccion', 'i', 'descripcion', 'it', 'provisional', 'importe','nit','nid', 'referencia']]
     return df_final
 
@@ -322,11 +381,12 @@ archivos = st.file_uploader(
 # Lista para guardar los resultados de cada archivo transformado
 
 dfs_transformados = []
+archivos_cargados = []
 
 if archivos is not None: # Verifica si hay archivos cargados
-    archivos_cargados = []
     for archivo in archivos:
         try:
+
             nombre = archivo.name.lower()
 
             # Detectar tipo de archivo por extensión
@@ -335,20 +395,19 @@ if archivos is not None: # Verifica si hay archivos cargados
             elif nombre.endswith(".csv"):
                 df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None)
             elif nombre.endswith(".xlsx"):
-                df = pd.read_excel(archivo, header=None)
+                    if banco_seleccionado == "Davivienda":
+                        df = pd.read_excel(archivo, header=None, skiprows=3)  # ⬅️ Omitir 3 primeras filas
+                    else:
+                        df = pd.read_excel(archivo, header=None)
             else:
                 st.warning(f"Formato no compatible: {archivo.name}")
                 continue    
 
                   
             # Transformar archivo
-            df_transformado = transformar_extracto(df, banco=banco_seleccionado)
+            df_transformado = transformar_extracto(df, banco=banco_seleccionado, archivo=archivo)
             dfs_transformados.append(df_transformado)
-
             archivos_cargados.append(f"✅ {archivo.name}")
-        
-            #Guadar en la lista
-            dfs_transformados.append(df_transformado)
 
         except Exception as e: 
             archivos_cargados.append(f"❌ {archivo.name} (Error: {e})")     
@@ -395,7 +454,7 @@ if archivos is not None: # Verifica si hay archivos cargados
             st.download_button(
                 label="📥 Descargar extractos consolidados",
                 data=buffer_final,
-                file_name="extractos_transformados.xlsx",
+                file_name=f"{banco_seleccionado} - extractos_transformados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )  
 
