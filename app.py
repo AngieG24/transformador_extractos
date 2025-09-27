@@ -10,54 +10,249 @@ import re
 #                             Bancos de México 
 #  ------------------------------------------------------------------------
 
-def transformar_extracto_bbva(df):
-    df = df.copy()
+# 1. Diccionario de reglas por banco
 
-    # Fecha en formato dd/mm/yyyy
-    df['Fecha'] = pd.to_datetime(df.iloc[:, 0]).dt.strftime("%d/%m/%Y")
+reglas_bancos_mx = {
+    "BBVA": {
+        "columnas": {
+            "cuenta": 0,
+            "fecha": 1,
+            "fecha_ope": 1,
+            "concepto": [2,3,4],
+            "cargo": 5,
+            "abono": 6,    
+        },
+        "tipo_importe": "abono_cargo" ,
+        "separador_miles": ".",
+        "separador_decimales": ","
+    },
 
-    df['Concepto'] = df.iloc[:, 1].astype(str) + " " + df.iloc[:, 2].astype(str) + " " + df.iloc[:, 3].astype(str)
+        "Banorte": {
+        "columnas": {
+            "cuenta": 0,
+            "fecha": 2,
+            "fecha_ope": 1,
+            "concepto": 11,
+            "cargo": 8,
+            "abono": 7,    
+        },
+        "tipo_importe": "cargo_abono" ,
+        "separador_miles": ",",
+        "separador_decimales": "."
+    }
+}
+
+# 2. Función para parsear múltiples formatos de fecha
+
+formatos_fecha_mx = [
+    "%d.%m.%y",
+    "%d.%m.%Y",
+    "%d/%m/%Y",
+    "%Y%m%d",
+    "%Y-%m-%d",
+    "%d-%m-%Y"
+]
+
+def parsear_fecha_multiple_mx(valor):
+    """Intenta convertir un valor a fecha probando varios formatos."""
+    if pd.isna(valor):              # Verifica si el valor está vacío o es nulo
+        return pd.NaT               # Si el valor es nulo (por ejemplo, está vacío o es NaN), devuelve pd.NaT (que significa "Not a Time", es decir, no hay fecha).
+    valor = str(valor).strip()      # Convierte el valor a texto y elimina espacios en blanco al inicio y al final
+    for formato in formatos_fecha_mx:  # Intenta convertir el valor a fecha usando varios formatos
+        try:
+            return pd.to_datetime(valor, format=formato, errors="raise")
+        except:
+            continue
+    return pd.NaT
+
+
+# 4. Función calcular importe
+
+def calcular_importe(df, reglas):
+
+    """
+    Calcula el importe según las reglas del banco.
+    - reglas["columnas"]["abono"]: índice de columna de abonos
+    - reglas["columnas"]["cargo"]: índice de columna de cargos
+    - reglas.get("tipo_importe"): 'abono_cargo' o 'cargo_abono'
+    """
+
+    columnas = reglas['columnas']
+    tipo = reglas.get("tipo_importe","abono_cargo")
     
-    # Asegurarse de que las columnas de valores son numéricas
-    df['Valor'] = pd.to_numeric(df.iloc[:, 5],errors="coerce").fillna(0) - pd.to_numeric(df.iloc[:, 4],errors="coerce").fillna(0)
+    abono = pd.to_numeric(df.iloc[:, columnas['abono']], errors="coerce").fillna(0)
+    cargo = pd.to_numeric(df.iloc[:, columnas['cargo']], errors="coerce").fillna(0)
     
-    df_final = df[['Fecha', 'Concepto', 'Valor']]
-    return df_final
+    return abono - cargo if tipo == "abono_cargo" else cargo - abono
 
+
+# 5. Función genérica de transformación para bancos de México
+
+def transformar_extracto_mx(df,banco, archivo=None):
+    
+    if banco not in reglas_bancos_mx:
+        raise ValueError(f"No hay reglas definidas para el banco '{banco}'")
+
+    reglas = reglas_bancos_mx.get(banco)
+    columnas = reglas['columnas']
+    
+    df_out_mx = df.copy()
+
+    # Mapear columnas según reglas
+
+    # ✅ Columnas: fechas
+    df_out_mx['fecha_ope'] = (
+        df.iloc[:, columnas['fecha_ope']]
+        .astype(str)
+        .str.strip()
+        .apply(parsear_fecha_multiple_mx)
+    )
+    df_out_mx['fecha_ope'] = df_out_mx['fecha_ope'].dt.strftime("%d/%m/%Y")
+
+    df_out_mx['fecha'] = (
+        df.iloc[:, columnas['fecha']]
+        .astype(str)
+        .str.strip()
+        .apply (parsear_fecha_multiple_mx)
+    )
+    df_out_mx['fecha'] = df_out_mx['fecha'].dt.strftime("%d/%m/%Y")
+
+ # ✅ Columnas opcionales
+    opcionales_mx = {
+        'ref 1': lambda s: s.astype(str).str.lstrip('0').str.upper(),
+        'ref 2': lambda s: s.astype(str).str.lstrip('0').str.upper()
+    }
+
+    for col, func in opcionales_mx.items():
+        if col in columnas:
+            df_out_mx[col] = func(df.iloc[:, columnas[col]])
+        else:
+            df_out_mx[col] = ""
+
+# ✅ Columna: concepto
+   
+   # Concatenar varias columnas si es necesario o tomar información de una sola
+    concepto_cols = columnas['concepto']
+    if isinstance(concepto_cols, list):
+        # concatenar columnas en orden   
+        df_out_mx['concepto'] =(
+            df.iloc[:, concepto_cols] # seleccionamos varias columnas (ej. [1,2,3])
+            .astype(str)              # convertimos a texto
+            .apply(lambda fila: ' '.join(fila).strip(), axis=1) # concatenamos y eliminamos espacios en blanco al inicio y al final
+            )
+    else:
+        # una sola columna
+        df_out_mx["concepto"] = df.iloc[:, concepto_cols].astype(str)
+
+# ✅ Columna: importe
+
+    df_out_mx['importe'] = calcular_importe(df, reglas)
+
+# ✅ Columna: cuenta
+
+    df_out_mx['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str).str.strip()
+    
+    
+    df_final_mx = df_out_mx[['cuenta','fecha', 'fecha_ope', 'concepto', 'importe', 'ref 1', 'ref 2']]
+    return df_final_mx
+
+
+# -------------------------- Interfaz Streamlit --------------------------
 st.title("Transformador de Extractos")
 
 st.subheader("🏦 Bancos de México")
 
+# Seleccionar banco
+banco_seleccionado_mx = st.selectbox(
+    "Selecciona el banco",
+    options=list(reglas_bancos_mx.keys())
+)
+
 # Subir archivo
-archivo = st.file_uploader("📂 Carga el archivo Excel del extracto", type=["xlsx", "xls"])
+archivos_mx = st.file_uploader(
+    "📂 Carga tus extractos",
+    type=["txt","csv", "xlsx"],
+    accept_multiple_files=True,
+    key="uploader_mx")
 
-if archivo is not None: #Asegurarse de que se ha cargado un archivo
-    try:
-        df = pd.read_excel(archivo, engine="openpyxl")  # Usa siempre openpyxl para leer
-        df = df.iloc[1:].reset_index(drop=True)  # elimina filas 0 y reinicia el índice
-        st.success("Archivo cargado correctamente ✅")
-        
-        df_transformado = transformar_extracto_bbva(df)
-        
-        st.subheader("Vista previa del archivo transformado:")
-        st.dataframe(df_transformado)
+# Lista para guardar los resultados de cada archivo transformado
+
+dfs_transformados_mx = []
+archivos_cargados_mx = []
+
+if archivos_mx is not None: # Verifica si hay archivos cargados
+    for archivo in archivos_mx:
+        try:
+
+            nombre = archivo.name.lower()
+
+            # Detectar tipo de archivo por extensión
+            if nombre.endswith(".txt"):
+                df = pd.read_csv(archivo, sep=';', decimal=",", encoding='latin1', header=None)
+            elif nombre.endswith(".csv"):
+                df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None)
+            elif nombre.endswith(".xlsx"):
+                    if banco_seleccionado_mx == "BBVA":
+                        df = pd.read_excel(archivo, header=None, skiprows=2)  # Omitir 2 primeras filas
+                    else:
+                        df = pd.read_excel(archivo, header=None, skiprows=1)
+            else:
+                st.warning(f"Formato no compatible: {archivo.name}")
+                continue    
+
+            # Transformar archivo
+            df_transformado_mx = transformar_extracto_mx(df, banco=banco_seleccionado_mx, archivo=archivo)
+            dfs_transformados_mx.append(df_transformado_mx)
+            archivos_cargados_mx.append(f"✅ {archivo.name}")
+
+        except Exception as e: 
+            archivos_cargados_mx.append(f"❌ {archivo.name} (Error: {e})")     
+    
+    # Mostrar resumen en un expander
+    with st.expander("Ver archivos cargados y estado"):
+        for estado in archivos_cargados_mx:
+            st.write(estado)
+
+    if dfs_transformados_mx:
+        df_transformado_mx = pd.concat(dfs_transformados_mx, ignore_index=True)
+
+        st.success("✅ Archivos procesados y consolidados correctamente") 
+
+        # Mostrar vista previa del consolidado
+        st.subheader(f"Vista previa:")
+        st.dataframe(df_transformado_mx.head(5))        
 
 
-# ---- Descargar en Excel ----
+        # Descargar archivo en Excel
         buffer = BytesIO()
-        df_transformado.to_excel(buffer, index=False, engine='openpyxl')
+        df_transformado_mx.to_excel(buffer, index=False, engine='openpyxl')
         buffer.seek(0)
 
-        st.download_button(
-            label="📥 Descargar en Excel",
-            data=buffer,
-            file_name="extracto_BBVA_transformado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        # Aplicar formato con openpyxl
+        wb = load_workbook(buffer)
+        ws = wb.active
 
-    except Exception as e: 
-        st.error(f"❌ Error al procesar el archivo: {e}"
-)
+        if "importe" in df_transformado_mx.columns:
+            # Ubicar la columna "importe" (posición 12 en df_final)
+            col_importe = df_transformado_mx.columns.get_loc('importe') + 1
+            for row in ws.iter_rows(min_row=2, min_col=col_importe, max_col=col_importe):
+                for cell in row:
+                    cell.number_format = '#,##0.00;[Red]-#,##0.00' # miles con "." y decimales con "," y negativos en rojo        
+
+            # Guardar en nuevo buffer
+            buffer_final_mx = BytesIO()
+            wb.save(buffer_final_mx)
+            buffer_final_mx.seek(0)
+
+            st.download_button(
+                label="📥 Descargar extractos consolidados",
+                data=buffer_final_mx,
+                file_name=f"{banco_seleccionado_mx} - extractos_transformados.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )  
+
+
+
 
 # -----------------------------------------------------------------------
 #                             Bancos de Colombia 
@@ -158,7 +353,7 @@ cuentas_bancos = {
     "171-2": 25
 }
 
-# 1. Diccionario de reglas por banco 
+# 1.3 Diccionario de reglas por banco 
 
 reglas_bancos = {
     "Banco de Bogotá": {
@@ -366,16 +561,17 @@ def transformar_extracto(df,banco, archivo=None):
 
 st.subheader("🏦 Bancos de Colombia")
 
-#Seleccionar banco
+# Seleccionar banco
 banco_seleccionado = st.selectbox(
-    "Selecciona el banco del extracto",
+    "Selecciona el banco",
     options=list(reglas_bancos.keys())
 )
 # Subir archivo
 archivos = st.file_uploader(
     "📂 Carga tus extractos",
     type=["txt","csv", "xlsx"],
-    accept_multiple_files=True)
+    accept_multiple_files=True,
+    key="uploader_co")
 
 
 # Lista para guardar los resultados de cada archivo transformado
@@ -425,16 +621,16 @@ if archivos is not None: # Verifica si hay archivos cargados
         # Ordenar por id de forma ascendente
         df_transformado = df_transformado.sort_values(by="id", ascending=True).reset_index(drop=True)
 
-            # Mostrar vista previa del consolidado
+        # Mostrar vista previa del consolidado
         st.subheader(f"Vista previa:")
         st.dataframe(df_transformado.head(5))   
             
-            # Descargar archivo en Excel
+        # Descargar archivo en Excel
         buffer = BytesIO()
         df_transformado.to_excel(buffer, index=False, engine='openpyxl')
         buffer.seek(0)
 
-            # Aplicar formato con openpyxl
+        # Aplicar formato con openpyxl
         wb = load_workbook(buffer)
         ws = wb.active        
 
