@@ -575,11 +575,11 @@ def transformar_extracto(df,banco, archivo=None):
                 df_out['cuenta'] = ""
 
                 # Columna 'importe': según referencia (CREDITO -> positivo) (DEBITO -> negativo)
-                referencia_davivienda = df_out['referencia'].fillna("").astype(str).str.upper()
-                df_out['importe'] =df_out['importe'].where(referencia_davivienda.str.contains("DEBITO"), -df_out['importe'])
+        referencia_davivienda = df_out['referencia'].fillna("").astype(str).str.upper()
+        df_out.loc[referencia_davivienda.str.contains("DEBITO"), 'importe'] *= -1
               
                 # mapear id por cuenta (si la cuenta está en el diccionario)
-                df_out['id'] = df_out['cuenta'].map(cuentas_bancos).fillna('Desconocido')        
+        df_out['id'] = df_out['cuenta'].map(cuentas_bancos).fillna('Desconocido')        
                 
     else:
                 # Otros bancos: cuenta viene de columna indicada en reglas
