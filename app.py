@@ -36,9 +36,20 @@ reglas_bancos_mx = {
             "cargo": 8,
             "abono": 7,    
         },
-        "tipo_importe": "cargo_abono" ,
-        "separador_miles": ",",
-        "separador_decimales": "."
+        "tipo_importe": "" ,
+    },
+
+        "Edenred": {
+        "columnas": {
+            "cuenta": 0,
+            "fecha": 0,
+            "fecha_ope": 0,
+            "concepto": 2,
+            "cargo": 6,
+            "abono": 5,
+            "ref 1": 3,
+        },
+        "tipo_importe": "" ,
     }
 }
 
@@ -58,6 +69,12 @@ def parsear_fecha_multiple_mx(valor):
     if pd.isna(valor):              # Verifica si el valor está vacío o es nulo
         return pd.NaT               # Si el valor es nulo (por ejemplo, está vacío o es NaN), devuelve pd.NaT (que significa "Not a Time", es decir, no hay fecha).
     valor = str(valor).strip()      # Convierte el valor a texto y elimina espacios en blanco al inicio y al final
+    
+    
+    # Para los casos donde la fecha trae más información como la hora. Por ej: 1/08/2025  12:27:45 p. m.
+    if " " in valor:
+        valor = valor.split(" ")[0]
+    
     for formato in formatos_fecha_mx:  # Intenta convertir el valor a fecha usando varios formatos
         try:
             return pd.to_datetime(valor, format=formato, errors="raise")
@@ -68,8 +85,8 @@ def parsear_fecha_multiple_mx(valor):
 
 # 4. Función calcular importe
 
-def calcular_importe(df, reglas):
 
+def calcular_importe(df, reglas, banco=None):
     """
     Calcula el importe según las reglas del banco.
     - reglas["columnas"]["abono"]: índice de columna de abonos
@@ -78,13 +95,31 @@ def calcular_importe(df, reglas):
     """
 
     columnas = reglas['columnas']
-    tipo = reglas.get("tipo_importe","abono_cargo")
-    
-    abono = pd.to_numeric(df.iloc[:, columnas['abono']], errors="coerce").fillna(0)
-    cargo = pd.to_numeric(df.iloc[:, columnas['cargo']], errors="coerce").fillna(0)
-    
-    return abono - cargo if tipo == "abono_cargo" else cargo - abono
+    tipo = reglas.get("tipo_importe", "abono_cargo")
 
+    # Extraer columnas
+    abono_col = df.iloc[:, columnas['abono']].astype(str).str.strip()
+    cargo_col = df.iloc[:, columnas['cargo']].astype(str).str.strip()
+
+    # 🚨 Limpieza especial solo para Banorte
+    
+    def limpiar_columna(serie):
+        return (
+            serie
+            .str.replace(r'[^0-9,.-]', '', regex=True)  # quita $ y otros
+            .str.replace(',', '', regex=False)          # elimina comas de miles
+            .replace('', '0')                           # si queda vacío → 0
+        )
+    if banco in ["Banorte", "Edenred"]:
+        abono_col = limpiar_columna(abono_col)
+        cargo_col = limpiar_columna(cargo_col) 
+    
+       # Convertir a numérico
+    abono = pd.to_numeric(abono_col, errors="coerce").fillna(0)
+    cargo = pd.to_numeric(cargo_col, errors="coerce").fillna(0)
+
+    # Retornar según el tipo de cálculo
+    return abono - cargo if tipo == "abono_cargo" else -cargo + abono
 
 # 5. Función genérica de transformación para bancos de México
 
@@ -146,13 +181,19 @@ def transformar_extracto_mx(df,banco, archivo=None):
 
 # ✅ Columna: importe
 
-    df_out_mx['importe'] = calcular_importe(df, reglas)
+    df_out_mx['importe'] = calcular_importe(df, reglas,banco=banco)
 
 # ✅ Columna: cuenta
 
     df_out_mx['cuenta'] = df.iloc[:, columnas['cuenta']].astype(str).str.strip()
     
-    
+    # Formato especial según banco
+
+    if banco == "Banorte":
+        df_out_mx['cuenta'] = "BANORTE " + df_out_mx['cuenta'].str[-4:]
+    elif banco == "Edenred":
+        df_out_mx['cuenta'] = "EDENRED"
+                                                               
     df_final_mx = df_out_mx[['cuenta','fecha', 'fecha_ope', 'concepto', 'importe', 'ref 1', 'ref 2']]
     return df_final_mx
 
@@ -190,7 +231,7 @@ if archivos_mx is not None: # Verifica si hay archivos cargados
             if nombre.endswith(".txt"):
                 df = pd.read_csv(archivo, sep=';', decimal=",", encoding='latin1', header=None)
             elif nombre.endswith(".csv"):
-                df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None)
+                df = pd.read_csv(archivo, sep=",", decimal=".", encoding="latin1", header=None, skiprows=1)
             elif nombre.endswith(".xlsx"):
                     if banco_seleccionado_mx == "BBVA":
                         df = pd.read_excel(archivo, header=None, skiprows=2)  # Omitir 2 primeras filas
@@ -250,8 +291,6 @@ if archivos_mx is not None: # Verifica si hay archivos cargados
                 file_name=f"{banco_seleccionado_mx} - extractos_transformados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )  
-
-
 
 
 # -----------------------------------------------------------------------
@@ -653,6 +692,9 @@ if archivos is not None: # Verifica si hay archivos cargados
                 file_name=f"{banco_seleccionado} - extractos_transformados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )  
+
+
+
 
 
 
