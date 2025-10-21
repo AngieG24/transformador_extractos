@@ -848,9 +848,7 @@ def conciliar_extractos(df_extracto, df_auxiliar):
                       pd.to_datetime(row_aux["Fecha"], dayfirst=True)).days) <= 1 and \
                  (row_ext["Importe"] == row_aux["Importe"]):
                 pass
-            elif (row_ext["Fecha"] == row_aux["Fecha"]) and \
-                 (row_ext["Descripcion"] == row_aux["Descripcion"]):
-                pass
+
             else:
                 continue  # no match
 
