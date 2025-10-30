@@ -120,6 +120,9 @@ codigos_dict = {
     "687": "Abono cancelacion CDT en proceso de prescripcion o prescrito",
     "394": "Cargo a cuenta en oficina",
     "938": "Devolucion IVA por ajuste a una comision",
+    "57" : "Comision transferencia por canal electronico",
+    "970": "Cargo por ajuste originado en el banco",
+    "215": "Comision uso internet corporativo"
 }
 
 def transformar_extracto_bdb(df):
